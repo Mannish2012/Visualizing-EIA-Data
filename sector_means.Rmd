@@ -1,0 +1,216 @@
+---
+title: "Sectoral Analysis"
+author: "Manish Gyawali"
+date: '2024-10-17'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+.dir <- "D:/projects/R/econ/eia"
+
+knitr::opts_chunk$set(echo = F, 
+                      warning = F, 
+                      comment = "", 
+                      message = F,
+                      fig.align = "center")
+knitr::opts_knit$set(root.dir = .dir)
+setwd(.dir)
+
+```
+
+```{r}
+setwd("D:/projects/R/econ")
+source("eia/presentation/sector_analysis.R")
+```
+
+```{r}
+
+sector_dat <- function(sector)  {
+  long_dat[[enexpr(sector)]]}
+```
+
+```{r}
+sector_vars <- function(sector){
+  dat <- eval(body(sector_dat))
+  setdiff(names(dat), c("year","value","sheet","scenario"))
+}
+```
+
+```{r}
+
+sector_long <- function(sector){
+  
+  # dat <- eval(body(sector_dat))
+  
+  sector <- ensym(sector)
+  dat <- eval(call("sector_dat", sector))
+  
+  dat %>%
+  pivot_longer(cols = !c(scenario,year,value,sheet),
+               names_to = "variable", values_to = "case") %>%
+  relocate(c(value,sheet), .after = c(case, last_col())) %>%
+  filter(!is.na(case)) %>%
+    rename("table" = "sheet",
+           "sec_variable" = "variable")
+}
+sector_long(coal) %>% distinct(sec_variable) %>% pull()
+
+```
+
+```{r}
+
+eia_tab <- readRDS("eia_data_tables.RDS")
+
+plot_data <- function(sector){
+  
+  sector <- ensym(sector)
+  dat_long <- eval(call("sector_long", sector))
+  
+  # dat_long <- eval(body(sector_long))
+  
+  eia_tab %>%
+  # replace 0s in L01, L02 etc so L1, L2
+  mutate(table = str_replace(table, "0(?=\\d)", "")) %>%
+  left_join(dat_long) %>%
+  filter(!is.na(value)) %>%
+  group_by(sec_variable, case, year) -> x1
+  
+  x1 %>% summarise(mean_val = mean(value, na.rm = TRUE)) -> x2
+  
+  x3 <- select(left_join(x1,x2), sec_variable, case, year, unit, mean_val) |>
+    ungroup()
+  
+  remove_vars <- c("World","Total")
+  
+  temp <- data.frame()
+
+  for(var in remove_vars){
+    temp <- filter(x3, !grepl(var, case))
+    x3 <- temp }
+  
+  temp
+  
+}
+
+# plot_data(coal) %>% pull(case) %>% unique()
+
+```
+
+```{r}
+
+# create data frame that aggregates marginal values in 'others' category
+
+# check if category is needed
+
+check_cat <- function(var){
+  
+  var <- ensym(var)
+  dat <- eval(call("plot_data", var)) 
+  
+  dat <- group_by(dat, case) |> 
+    summarise(mean = mean(mean_val)) |>
+    arrange(desc(mean)) |>
+    pull(case)
+  
+  needed_cases <- head(dat, 10)
+  others <- setdiff(dat, needed_cases)
+  
+  needed_cases
+
+  
+}; check_cat(coal) 
+
+```
+
+```{r}
+others <- function(dat){
+  
+
+  
+  str(dat)
+
+  others <- aggregate(mean_val ~ case, dat, mean) %>% 
+    arrange(mean_val) %>% 
+    pull(case) %>% .[1:10]
+  
+  others_df <- map_df(others, ~filter(temp, case == .x))
+  others_df <- aggregate(mean_val ~ year, others_df, mean)
+  others_df$case <- "Others"
+  
+  # remove all rows containing 'others' countries
+  
+  temp <- data.frame()
+  
+  for(country in others){
+    temp <- filter(dat, !grepl(country, case))
+    dat <- temp }
+  
+  # now combine temp2 and others_df
+  rbind(dat, others_df)
+}
+
+
+```
+
+
+```{r}
+
+get_plot <- function(sector, chart_type = "dot"){
+  
+  dat <- eval(body(plot_data)) %>% split(.$sec_variable)
+    
+  if(chart_type == "dot"){
+    
+    lapply(dat, function(x){
+      ggplot(ungroup(x), aes(year, mean_val)) +
+        geom_point(aes(colour = case)) +
+        geom_line(aes(colour = case)) +
+        
+        scale_y_continuous(labels = scales::label_number(scale_cut =
+                              scales::cut_long_scale())) +
+        
+        labs(title = str_to_title(unique(x$sec_variable)),
+             subtitle = paste("mean values in units of",x$unit)) +
+        
+        guides(fill = guide_legend(nrow = 3)) + 
+      
+        theme(legend.title = element_blank(),
+              legend.position  = "bottom",
+              axis.title = element_blank())
+      })
+    
+  } else if(chart_type == "bar"){
+     
+      lapply(dat, function(x){
+        ggplot(x, aes(year, mean_val)) +
+          geom_col(aes(fill = case)) +
+          # geom_line(aes(colour = case)) +
+          labs(title = str_to_title(unique(x$sec_variable)),
+               subtitle = x$unit) +
+          theme(legend.title = element_blank())
+      })
+    
+  } else if(chart_type == "pie"){
+    
+     lapply(dat, function(X){
+       ggplot(X, aes(x = "", y = mean_val, fill = case)) + 
+         geom_col() + 
+         coord_polar(theta = "y") + 
+         scale_y_continuous(labels = scales::label_number(scale_cut = 
+                              scales::cut_long_scale())) + 
+         xlab(NULL) + ylab(NULL) + 
+          labs(title = str_to_title(ensym(sector)), 
+               subtitle = str_to_title(unique(X$sec_variable))) +
+          theme(legend.title = element_blank()) 
+         
+       })
+    }
+}
+```
+
+
+```{r}
+get_plot(overview, chart_type = "dot")
+```
+
